@@ -18,7 +18,7 @@ It features a **Traffic Light Logic** system that gives you immediate, intuitive
 ```mermaid
 graph TD
     subgraph "Power"
-        Power["Power Source<br/>(USB/Battery)"]
+        PowerSrc["Power Source<br/>(USB/Battery)"]
     end
 
     subgraph "Sensors (I2C)"
@@ -35,7 +35,7 @@ graph TD
 
     MCU["Microcontroller<br/>(Arduino/ESP32)"]
 
-    Power --> MCU
+    PowerSrc --> MCU
     MCU <==>|"I2C (SDA/SCL)"| BME680
     MCU <==>|"I2C (SDA/SCL)"| SGP30
     MCU -->|"GPIO 4"| L_Red
