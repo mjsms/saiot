@@ -18,31 +18,31 @@ It features a **Traffic Light Logic** system that gives you immediate, intuitive
 ```mermaid
 graph TD
     subgraph "Power"
-        Power[Power Source<br/>(USB/Battery)]
+        Power["Power Source<br/>(USB/Battery)"]
     end
 
     subgraph "Sensors (I2C)"
-        BME680[Adafruit BME680<br/>Temp, Hum, Press, Gas]
-        SGP30[Adafruit SGP30<br/>TVOC, eCO2]
+        BME680["Adafruit BME680<br/>Temp, Hum, Press, Gas"]
+        SGP30["Adafruit SGP30<br/>TVOC, eCO2"]
     end
 
     subgraph "Outputs"
-        L_Red((Red LED<br/>Danger))
-        L_Yel((Yellow LED<br/>Warning))
-        L_Wht((White LED<br/>Safe))
-        L_Blu((Blue LED<br/>Activity))
+        L_Red(("Red LED<br/>Danger"))
+        L_Yel(("Yellow LED<br/>Warning"))
+        L_Wht(("White LED<br/>Safe"))
+        L_Blu(("Blue LED<br/>Activity"))
     end
 
-    MCU[Microcontroller<br/>(Arduino/ESP32)]
+    MCU["Microcontroller<br/>(Arduino/ESP32)"]
 
     Power --> MCU
-    MCU <==>|I2C (SDA/SCL)| BME680
-    MCU <==>|I2C (SDA/SCL)| SGP30
-    MCU -->|GPIO 4| L_Red
-    MCU -->|GPIO 7| L_Yel
-    MCU -->|GPIO 6| L_Wht
-    MCU -->|GPIO 10| L_Blu
-    MCU -.->|Serial| PC[Computer/Monitor]
+    MCU <==>|"I2C (SDA/SCL)"| BME680
+    MCU <==>|"I2C (SDA/SCL)"| SGP30
+    MCU -->|"GPIO 4"| L_Red
+    MCU -->|"GPIO 7"| L_Yel
+    MCU -->|"GPIO 6"| L_Wht
+    MCU -->|"GPIO 10"| L_Blu
+    MCU -.->|Serial| PC["Computer/Monitor"]
 ```
 
 ---
