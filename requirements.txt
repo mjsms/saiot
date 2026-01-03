@@ -1,0 +1,4 @@
+gpiozero
+spidev
+RPi.GPIO
+# SX127x (Normalmente instalado manualmente ou via git para o Waveshare HAT)
