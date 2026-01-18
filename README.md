@@ -12,23 +12,23 @@ This system leverages a hybrid communication approach to monitor forest areas. S
 graph LR
     subgraph "Sensor Node A (Heltec V3)"
         SensorsA[BME680 / SGP30] --> ESP32_V3
-        ESP32_V3 -->|LoRa (868MHz)| SX1262
+        ESP32_V3 -->|"LoRa (868MHz)"| SX1262
     end
 
     subgraph "Sensor Node B (ESP32-S2)"
         SensorsB[BME680 / SGP30] --> ESP32_S2
-        ESP32_S2 -->|WiFi UDP| WiFi_Antenna
+        ESP32_S2 -->|"WiFi UDP"| WiFi_Antenna
     end
 
     subgraph "Central Node (Raspberry Pi)"
-        LoRaModule[SX126x LoRa Hat] -->|SPI| RPi[Raspberry Pi 3B+]
-        WiFi_RPi[WiFi Interface] -->|UDP Port 5005| RPi
-        RPi -->|GPIO| Servo[Camera Servo]
-        RPi -->|CSI| Cam[Pi Camera]
+        LoRaModule[SX126x LoRa Hat] -->|"SPI"| RPi["Raspberry Pi 3B+"]
+        WiFi_RPi[WiFi Interface] -->|"UDP Port 5005"| RPi
+        RPi -->|"GPIO"| Servo[Camera Servo]
+        RPi -->|"CSI"| Cam[Pi Camera]
     end
 
-    SX1262 -.->|LoRa Packet| LoRaModule
-    WiFi_Antenna -.->|UDP Packet| WiFi_RPi
+    SX1262 -.->|"LoRa Packet"| LoRaModule
+    WiFi_Antenna -.->|"UDP Packet"| WiFi_RPi
 ```
 
 ---
@@ -121,5 +121,3 @@ The system uses a human-readable string key-value format:
 - `FIRE-DETECTED`: Confirmed fire risk (Red LED) -> Triggers Camera.
 
 ---
-
-*Project for Faculdade SAIoT Class*
