@@ -1,136 +1,134 @@
-import time
-import sys
-import subprocess
-from gpiozero import AngularServo
-from time import sleep
+import os, sys, cv2, time, socket, threading
+from LoRaRF import SX126x
+from gpiozero import Servo
+from gpiozero.pins.lgpio import LGPIOFactory
 
-# --- CONFIGURAÇÃO ---
-SERVO_PIN = 17          # Pino GPIO do Servo
-LORA_FREQ = 868.0       # Frequência (868MHz)
-LORA_SF = 12            # Spreading Factor (Longo Alcance)
-LORA_BW = 125000        # Bandwidth
+# --- CONFIGURAÇÕES ---
+UDP_PORT = 5005           # Porta para receber WiFi do S2
+COOLDOWN_TIME = 120       # 10 minutos em segundos
+POS_ESQUERDA = 0.8        # Posição para ID 1 (S2)
+POS_DIREITA = -0.8        # Posição para ID 2 (S3)
+POS_CENTRO = 0.0          # Vigilância
 
-# --- DEPENDÊNCIA LORA ---
-# Este script assume a existência de uma biblioteca SX127x.
-# Se estiveres a usar o Waveshare LoRa HAT, descarrega os ficheiros de exemplo
-# e coloca 'SX127x.py' e 'config.py' na mesma pasta.
+# --- ESTILIZAÇÃO ---
+C_GREEN, C_YELLOW, C_RED = "\033[92m", "\033[93m", "\033[91m"
+C_BOLD, C_RESET = "\033[1m", "\033[0m"
+
+# --- HARDWARE ---
+factory = LGPIOFactory()
+servo = Servo(12, pin_factory=factory, min_pulse_width=0.5/1000, max_pulse_width=2.5/1000)
+lock = threading.Lock() # Impede conflito entre LoRa e WiFi no servo/camera
+alert_history = {}      # Guarda {id: timestamp}
+
+def processar_alerta(device_id):
+    """Executa a rotação, foto e cooldown"""
+    agora = time.time()
+
+    # Validação do Cooldown
+    if device_id in alert_history:
+        if agora - alert_history[device_id] < COOLDOWN_TIME:
+            print(f"{C_YELLOW}[Cooldown] Alerta de ID {device_id} ignorado (menos de 10min).{C_RESET}")
+            return
+
+    with lock: # Bloqueia o hardware para este processo
+        alert_history[device_id] = agora
+        print(f"{C_RED}{C_BOLD}!!! ALERTA ATIVADO PARA ID {device_id} !!!{C_RESET}")
+
+        # 1. Rodar para o alvo
+        pos = POS_ESQUERDA if device_id == 1 else POS_DIREITA
+        servo.value = pos
+        time.sleep(1.5)
+        servo.detach() # Para o tremor
+
+        # 2. Captura de Foto
+        cap = cv2.VideoCapture(0)
+        ret, frame = cap.read()
+        if ret:
+            nome_foto = f"/home/mmenezes/FOGO_ID{device_id}_{time.strftime('%H%M%S')}.jpg"
+            cv2.imwrite(nome_foto, frame)
+            print(f"{C_GREEN}Foto guardada: {nome_foto}{C_RESET}")
+        cap.release()
+
+        # 3. Voltar ao Centro
+        time.sleep(2)
+        print("Retornando à vigilância...")
+        servo.value = POS_CENTRO
+        time.sleep(1.5)
+        servo.detach()
+
+def wifi_server():
+    """Thread dedicada para ouvir alertas via WiFi"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("0.0.0.0", UDP_PORT))
+    print(f"{C_GREEN}[WiFi] Servidor ativo na porta {UDP_PORT}{C_RESET}")
+
+    while True:
+        data, addr = sock.recvfrom(1024)
+        msg = data.decode().strip()
+
+        # --- ADICIONA ESTA LINHA PARA VERES TUDO NO TERMINAL ---
+        print(f"[{time.strftime('%H:%M:%S')}] WiFi: {msg}")
+
+        if "FIRE-DETECTED" in msg:
+            try:
+                did = int(msg.split("ID:")[1].split(",")[0])
+                processar_alerta(did)
+            except: pass
+
+def lora_loop():
+    """Loop principal para ouvir LoRa com limpeza de buffer"""
+    LoRa = SX126x()
+    if not LoRa.begin(0, 0, 18, 20, 16, 6, -1):
+        raise Exception("Erro ao iniciar LoRa")
+
+    LoRa.setDio2RfSwitch()
+    LoRa.setFrequency(868000000)
+    LoRa.setLoRaModulation(7, 125000, 5)
+    LoRa.setLoRaPacket(LoRa.HEADER_EXPLICIT, 8, 64, True)
+    LoRa.setSyncWord(0xF344)
+    LoRa.request(LoRa.RX_CONTINUOUS)
+
+    # --- LIMPEZA ROBUSTA DO BUFFER ---
+    print(f"{C_YELLOW}A limpar buffer LoRa (ignorando mensagens antigas)...{C_RESET}")
+    start_clear = time.time()
+    while time.time() - start_clear < 3: # Limpa durante 3 segundos
+        if LoRa.available():
+            while LoRa.available() > 0: LoRa.read()
+
+    print(f"{C_GREEN}[LoRa] Receptor ativo e limpo em 868MHz{C_RESET}")
+
+    while True:
+        if LoRa.available():
+            message = ""
+            while LoRa.available() > 0:
+                val = LoRa.read()
+                if 32 <= val <= 126: message += chr(val)
+
+            # --- MUDANÇA CRÍTICA: Imprimir SEMPRE o que chega ---
+            timestamp = time.strftime('%H:%M:%S')
+            print(f"[{timestamp}] LoRa RAW: {message}")
+
+            if "FIRE-DETECTED" in message:
+                try:
+                    # Extrai o ID e processa
+                    did = int(message.split("ID:")[1].split(",")[0])
+                    processar_alerta(did)
+                except Exception as e:
+                    print(f"Erro ao processar ID: {e}")
+
+# --- EXECUÇÃO ---
+servo.value = POS_CENTRO # Inicia centrado
+time.sleep(1)
+servo.detach()
+
+# Inicia WiFi em segundo plano
+t_wifi = threading.Thread(target=wifi_server, daemon=True)
+t_wifi.start()
+
+# Inicia LoRa no loop principal
 try:
-    from SX127x import SX127x
-except ImportError:
-    print("ERRO: Biblioteca SX127x não encontrada.")
-    print("Por favor copia os ficheiros 'SX127x.py' da demo da Waveshare para esta pasta.")
-    print("Alternativa: instalar pyLoRa e adaptar o import.")
-    sys.exit(1)
-
-# --- SETUP HARDWARE ---
-# Ajustar range do servo conforme o teu modelo (min_pulse_width/max_pulse_width)
-servo = AngularServo(SERVO_PIN, min_angle=0, max_angle=180)
-
-def take_photo(angle):
-    filename = f"fire_alert_{int(time.time())}_ang{angle}.jpg"
-    print(f"📸 Tirando foto: {filename}")
-    
-    # Usando libcamera-still (Bullseye/Bookworm)
-    # -t 1 : timeout curto
-    # -o : output file
-    # --nopreview : sem preview no ecra
-    cmd = ["libcamera-still", "-t", "1", "-o", filename, "--nopreview"]
-    
-    try:
-        subprocess.run(cmd, check=True)
-        print("✅ Foto guardada com sucesso.")
-    except Exception as e:
-        print(f"❌ Erro ao tirar foto: {e}")
-
-class LoRaReceiver(SX127x):
-    def __init__(self, verbose=False):
-        super(LoRaReceiver, self).__init__(board_config=BOARD, verbose=verbose)
-        self.set_mode(MODE.SLEEP)
-        self.set_dio_mapping([0] * 6)
-        self.set_pa_config(pa_select=1)
-        self.set_freq(LORA_FREQ)
-        self.set_spreading_factor(LORA_SF)
-        self.set_bw(LORA_BW)
-        self.set_sync_word(0xF3) # MESMO SYNC WORD DO ESP32!
-        self.set_rx_crc(True)
-        
-    def on_rx_done(self):
-        print("\n📡 Pacote Recebido!")
-        self.clear_irq_flags(RxDone=1)
-        payload = self.read_payload(nocheck=True)
-        
-        # Converter bytes para string
-        try:
-            message = bytes(payload).decode("utf-8", 'ignore')
-            print(f"📩 Conteúdo: {message}")
-            
-            # Parsing "ID:1,ANG:45"
-            if "ID:" in message and "ANG:" in message:
-                parts = message.split(",")
-                angle_part = [p for p in parts if "ANG:" in p][0]
-                angle_val = int(angle_part.split(":")[1])
-                
-                print(f"🔥 ALERTA DE FOGO! Sensor no ângulo {angle_val}°")
-                self.process_alert(angle_val)
-            else:
-                print("⚠️ Formato inválido ou ruído.")
-                
-        except Exception as e:
-            print(f"❌ Erro no parsing: {e}")
-            
-        self.set_mode(MODE.SLEEP)
-        self.reset_ptr_rx()
-        self.set_mode(MODE.RXCONT)
-
-    def process_alert(self, angle):
-        # 1. Mover Servo
-        print(f"⚙️ Movendo servo para {angle}°...")
-        servo.angle = angle
-        sleep(1) # Esperar o servo chegar
-        
-        # 2. Tirar Foto
-        take_photo(angle)
-        
-        # 3. Resetar servo
-         servo.angle = 90
-
-# --- CONFIGURAÇÃO DA PLACA (Waveshare HAT) ---
-# Isto depende da biblioteca config.py do Waveshare, mas aqui definimos um default
-class BoardConfig:
-    DIO0 = 4   # BC4
-    RST  = 17  # BC17  <- ATENÇÃO: Se o servo usar o 17, muda isto!
-    LED  = 18  # Led debug
-    # SPI
-    SPI_BUS  = 0
-    SPI_CS   = 0
-
-# NOTA IMPORTANTE: GPIO 17 é muitas vezes o Reset do LoRa HAT e também default para PWM.
-# Se houver conflito, muda o pino do Servo para GPIO 27 ou outro livre.
-# Vou mudar o Servo para GPIO 22 para evitar conflitos com o HAT default.
-SERVO_PIN = 22 
-servo = AngularServo(SERVO_PIN, min_angle=0, max_angle=180)
-
-BOARD = BoardConfig()
-
-def start():
-    print("🌲 Iniciando Central Node (LoRa Receiver)...")
-    print(f"ℹ️ Freq: {LORA_FREQ}MHz, SF: {LORA_SF}")
-    
-    lora = LoRaReceiver(verbose=False)
-    lora.set_mode(MODE.STDBY)
-    lora.set_mode(MODE.RXCONT)
-    
-    print("👂 Escutando...")
-    try:
-        while True:
-            sleep(0.1)
-            # O processamento é feito no callback on_rx_done (interrupção/polling interno)
-            # Se a lib não usar thread, precisamos de chamar o handler
-            # lora.checkForRx() # Descomentar se a lib não for threaded
-            pass
-    except KeyboardInterrupt:
-        print("A sair...")
-        lora.set_mode(MODE.SLEEP)
-
-if __name__ == "__main__":
-    start()
+    lora_loop()
+except KeyboardInterrupt:
+    print("\nSistema encerrado.")
+finally:
+    servo.detach()

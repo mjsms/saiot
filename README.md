@@ -1,8 +1,8 @@
-# 🌲 Forest Fire Detection System (LoRa P2P)
+# 🌲 Forest Fire Detection System (Hybrid LoRa/WiFi)
 
-**A distributed forest fire detection network using ESP32-S2 (Sensor Nodes) and Raspberry Pi (Central Node).**
+**A distributed forest fire detection network supporting both LoRa (Heltec V3) and WiFi (ESP32-S2) nodes, monitored by a Raspberry Pi Central Node.**
 
-This system uses **LoRa (Long Range) Point-to-Point** communication at 868MHz to monitor forest areas. Sensor nodes wake up periodically to check air quality and BME680/SGP30 readings. If fire is detected, they send an immediate alert to the Central Node, which rotates a camera to the event location and captures evidence.
+This system leverages a hybrid communication approach to monitor forest areas. Sensor nodes wake up periodically to measure air quality (`BME680`/`SGP30`). If a potential fire is detected, they transmit alerts via **LoRa** (Long Range) or **WiFi UDP** to the Central Node. The Central Node automatically rotates a camera to the specific sensor's location to capture visual evidence.
 
 ---
 
@@ -10,82 +10,115 @@ This system uses **LoRa (Long Range) Point-to-Point** communication at 868MHz to
 
 ```mermaid
 graph LR
-    subgraph "Sensor Node (ESP32-S2)"
-        Sensors[BME680 + SGP30] --> ESP32
-        ESP32 -->|SPI| RFM95[RFM95W (LoRa)]
-        ESP32 -- "Deep Sleep (5min)" --> ESP32
+    subgraph "Sensor Node A (Heltec V3)"
+        SensorsA[BME680 / SGP30] --> ESP32_V3
+        ESP32_V3 -->|LoRa (868MHz)| SX1262
+    end
+
+    subgraph "Sensor Node B (ESP32-S2)"
+        SensorsB[BME680 / SGP30] --> ESP32_S2
+        ESP32_S2 -->|WiFi UDP| WiFi_Antenna
     end
 
     subgraph "Central Node (Raspberry Pi)"
-        LoRaHAT[Waveshare LoRa HAT] -->|SPI| RPi[Raspberry Pi 3B+]
+        LoRaModule[SX126x LoRa Hat] -->|SPI| RPi[Raspberry Pi 3B+]
+        WiFi_RPi[WiFi Interface] -->|UDP Port 5005| RPi
         RPi -->|GPIO| Servo[Camera Servo]
         RPi -->|CSI| Cam[Pi Camera]
     end
 
-    RFM95 -.->|868MHz (SF12)| LoRaHAT
+    SX1262 -.->|LoRa Packet| LoRaModule
+    WiFi_Antenna -.->|UDP Packet| WiFi_RPi
 ```
 
 ---
 
 ## ✨ Features
 
-- **Long Range Communication**: Uses LoRa with Spreading Factor 12 (SF12) for maximum forest penetration.
-- **Ultra Low Power**: ESP32 nodes sleep for 5 minutes (Deep Sleep), waking only to measure.
-- **Panic Mode**: If fire is detected, the node wakes up every 30 seconds to send continuous updates.
-- **Visual Verification**: The Central Node automatically points a camera at the angle of the alert and takes a photo.
-- **Robustness**: Raspberry Pi filters radio noise and only acts on valid `ID:ANGLE` packets.
+- **Hybrid Communication**: Supports both **LoRa** (for long-range, off-grid areas) and **WiFi** (for areas with coverage) simultaneously.
+- **Intelligent Alerting**:
+    - **Heltec V3**: Sends alerts via LoRa (868MHz, SF7).
+    - **ESP32-S2**: Sends alerts via UDP over WiFi.
+- **Multi-Stage Detection**:
+    - Monitors gas resistance/TVOC values.
+    - Classifies status as `NO-FIRE`, `POSSIBLE-FIRE`, or `FIRE-DETECTED`.
+    - Requires **3 consecutive confirmations** before triggering a full alarm.
+- **Automated Surveillance**:
+    - Central Node listens on both channels.
+    - Upon receiving `FIRE-DETECTED`, it **rotates the camera** to the node's assigned angle (Left/Right).
+    - Captures and saves a photo labeled with the Node ID and timestamp.
+    - Enforces a 2-minute cooldown per node to prevent spam.
 
 ---
 
 ## 🛠️ Hardware & Pinout
 
-### 1. ESP32-S2 Sensor Node
+### 1. Sensor Nodes
+
+#### Option A: Heltec V3 (LoRa)
 | Component | Pin (GPIO) | Function |
 | :--- | :--- | :--- |
-| **RFM95 NSS** | 10 | LoRa Chip Select |
-| **RFM95 RST** | 5 | LoRa Reset |
-| **RFM95 DIO0** | 14 | LoRa IRQ |
-| **RFM95 MOSI** | 35 | SPI Data |
-| **RFM95 MISO** | 37 | SPI Data |
-| **RFM95 SCK** | 36 | SPI Clock |
-| **SDA (I2C)** | 8 | BME680/SGP30 Data |
-| **SCL (I2C)** | 9 | BME680/SGP30 Clock |
+| **I2C SDA** | 41 | Sensor Data |
+| **I2C SCL** | 42 | Sensor Clock |
+| **LoRa Interface** | Internal | SX1262 (NSS:8, DIO1:14, RST:12, BUSY:13) |
+| **OLED** | Internal | Status Display |
+| **LEDs** | 1, 2, 3, 4 | Red, White, Yellow, Blue |
+
+#### Option B: ESP32-S2 (WiFi)
+| Component | Pin (GPIO) | Function |
+| :--- | :--- | :--- |
+| **I2C SDA** | 8 | Sensor Data |
+| **I2C SCL** | 9 | Sensor Clock |
+| **LEDs** | 4, 6, 7, 10 | Red, White, Yellow, Blue |
 
 ### 2. Raspberry Pi Central Node
 | Component | Pin (GPIO) | Function |
 | :--- | :--- | :--- |
-| **LoRa HAT** | Standard | Uses SPI0 (CE0) |
-| **Servo** | 22 | PWM Signal |
-| **Camera** | CSI Port | Ribon Cable |
+| **LoRa HAT** | SPI0 | SX126x Communication |
+| **Servo** | 12 | PWM Camera Control |
+| **Camera** | CSI Port | Visual Verification |
 
 ---
 
 ## 💻 Installation & Usage
 
-### Sensor Node (ESP32)
-1.  **Dependencies**: Install `Adafruit BME680`, `Adafruit SGP30`, and `LoRa` (Sandeep Mistry) in Arduino IDE.
-2.  **Upload**: Flash `sensor_node.ino` to your ESP32-S2.
-3.  **Deploy**: Mount the sensor on a tree. It will automatically start its Sleep/Wake cycle.
+### Sensor Nodes (Arduino IDE)
+1.  **Libraries**: Install `Adafruit BME680`, `Adafruit SGP30`, `RadioLib` (for LoRa), and `U8g2` (for OLED).
+2.  **Configuration**:
+    - Open `sensor_node.ino`.
+    - Uncomment `#define BOARD_V3` for Heltec LoRa **OR** `#define BOARD_S2` for ESP32 WiFi.
+    - Set `NODE_ID` (1 for S2, 2 for V3).
+3.  **Upload**: Select the correct board and flash.
 
 ### Central Node (Raspberry Pi)
-1.  **Enable Interfaces**: Run `sudo raspi-config` and enable **SPI** and **Camera**.
-2.  **Install Python Libs**:
+1.  **Prerequisites**: Enable SPI and Camera (`sudo raspi-config`).
+2.  **Dependencies**:
     ```bash
     pip install -r requirements.txt
     ```
-    *Note: Ensure `SX127x.py` is in the folder (from Waveshare demo).*
+    *Requires `opencv-python`, `gpiozero`, `lora-rf` (or compatible SX126x driver).*
 3.  **Run**:
     ```bash
     python central_node_lora.py
     ```
+    The script will start two threads: one for LoRa and one for WiFi UDP.
 
 ---
 
 ## 📊 Packet Format
-The system uses a simple string protocol:
-`ID:<NODE_ID>,ANG:<ANGLE>`
 
-Example: `ID:1,ANG:45` -> Node 1 detected fire at 45 degrees.
+The system uses a human-readable string key-value format:
+
+**Format:** `ID:<NODE_ID>,LABEL:<STATUS>,VAL:<SENSOR_VALUE>`
+
+**Examples:**
+- `ID:2,LABEL:FIRE-DETECTED,VAL:450` (Critical Alert)
+- `ID:1,LABEL:NO-FIRE,VAL:25000` (Heartbeat/Normal)
+
+**Status Codes:**
+- `NO-FIRE`: Normal operation (White LED).
+- `POSSIBLE-FIRE`: Pre-alert threshold crossed (Yellow LED).
+- `FIRE-DETECTED`: Confirmed fire risk (Red LED) -> Triggers Camera.
 
 ---
 
