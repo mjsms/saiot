@@ -18,7 +18,7 @@
 #ifdef BOARD_S2
 #define BOARD_NAME "ESP32-S2"
 #include <WiFi.h>
-#include <WiFiUdp.h> // MUDANÇA: Usar UDP em vez de HTTP
+#include <WiFiUdp.h>
 #define PIN_SDA 8
 #define PIN_SCL 9
 #define LED_RED 4
