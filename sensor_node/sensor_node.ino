@@ -7,7 +7,7 @@
 #include <Wire.h>
 
 // ======================================================
-// 1. SELEÇÃO DA PLACA (DESCOMENTAR APENAS UMA)
+// 1. SELEÇÃO DA PLACA 
 // ======================================================
 // #define BOARD_S2  // ESP32-S2 (WiFi)
 #define BOARD_V3 // Heltec V3 (LoRa SX1262)
